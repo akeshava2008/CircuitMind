@@ -15,6 +15,8 @@ from agent.circuit_agent import CircuitAgent, InvalidDesignJSON
 from agent.bom import format_bom_table, calculate_bom_total
 from agent.schematic import generate_schematic
 from utils.rag import load_pdf_and_chunk, get_relevant_chunks
+from ui.schematic_view import schematic_html
+from ui.three_view import board_html
 
 load_dotenv()
 
@@ -227,6 +229,31 @@ st.markdown(
     .cm-pill{display:inline-flex; align-items:center; gap:7px; font-family:var(--mono); font-size:11px;
       color:#7fe9d0; background:#0c241f; border:1px solid #1f6f5a; border-radius:999px; padding:5px 11px;}
     .cm-pill.off{color:var(--dim); background:#11161f; border-color:#ffffff1a;}
+
+    /* ---------- build-plan timeline ---------- */
+    .cm-tline{position:relative; padding-left:27px; margin-top:4px;}
+    .cm-tline::before{content:""; position:absolute; left:8px; top:8px; bottom:8px; width:2px;
+      background:linear-gradient(180deg,#22d3ee88,#4b8bff55,#ff4d9733);}
+    .cm-ph{position:relative; background:#0e1420a3; border:1px solid var(--line);
+      border-radius:14px; padding:16px 18px; margin-bottom:12px; backdrop-filter:blur(12px);
+      transition:.22s;}
+    .cm-ph:hover{border-color:#ffffff2b; transform:translateY(-2px);}
+    .cm-ph::before{content:""; position:absolute; left:-24px; top:21px; width:11px; height:11px;
+      border-radius:50%; background:var(--grad); border:2px solid #080b12;
+      box-shadow:0 0 0 2px #27406399;}
+    .cm-ph-h{display:flex; align-items:baseline; justify-content:space-between; gap:12px;
+      flex-wrap:wrap;}
+    .cm-ph-n{font-family:var(--head); font-size:15.5px; font-weight:600; color:var(--ink);}
+    .cm-ph-n span{font-family:var(--mono); font-size:11px; color:var(--cyan); margin-right:8px;}
+    .cm-ph-t{font-family:var(--mono); font-size:10.5px; color:var(--dim); white-space:nowrap;}
+    .cm-ph-g{font-size:13px; color:var(--muted); margin-top:6px; line-height:1.6;}
+    .cm-ph ol{margin:12px 0 0; padding-left:19px;}
+    .cm-ph li{font-size:13px; color:#d3dcec; line-height:1.65; margin-bottom:5px;}
+    .cm-ph-c{margin-top:12px; font-family:var(--mono); font-size:11px; color:#7fe9d0;
+      background:#0c241f; border:1px solid #1f6f5a; border-radius:10px; padding:9px 12px;
+      line-height:1.6;}
+    .cm-ph-p{margin-top:11px; display:flex; flex-wrap:wrap; gap:5px;}
+    .cm-ph-p .cm-chip{color:var(--muted); background:#11182600; border-color:#ffffff1f;}
     </style>
     """.replace("PATTERN_URL", TRACE_SVG),
     unsafe_allow_html=True,
@@ -373,6 +400,40 @@ def warning_rows(warnings: list) -> str:
             f'<div class="cm-warn-t">{_esc(text)}</div></div>'
         )
     return "".join(rows)
+
+
+def build_plan_html(phases: list) -> str:
+    """Render the agent's build plan as a phased timeline."""
+    blocks = []
+    for phase in phases:
+        if not isinstance(phase, dict):
+            continue
+        # a phase with no name, goal or steps is noise, not a phase
+        if not (phase.get("phase") or phase.get("goal") or phase.get("steps")):
+            continue
+        i = len(blocks) + 1
+        steps = "".join(
+            f"<li>{_esc(s)}</li>" for s in (phase.get("steps") or []) if s
+        )
+        parts = "".join(
+            f'<span class="cm-chip">{_esc(p)}</span>'
+            for p in (phase.get("parts") or []) if p
+        )
+        est = phase.get("est_time") or ""
+        checkpoint = phase.get("checkpoint") or ""
+        blocks.append(
+            '<div class="cm-ph"><div class="cm-ph-h">'
+            f'<div class="cm-ph-n"><span>{i:02d}</span>{_esc(phase.get("phase") or "Phase")}</div>'
+            + (f'<div class="cm-ph-t">{_esc(est)}</div>' if est else "")
+            + "</div>"
+            + (f'<div class="cm-ph-g">{_esc(phase.get("goal"))}</div>'
+               if phase.get("goal") else "")
+            + (f"<ol>{steps}</ol>" if steps else "")
+            + (f'<div class="cm-ph-c">✓ {_esc(checkpoint)}</div>' if checkpoint else "")
+            + (f'<div class="cm-ph-p">{parts}</div>' if parts else "")
+            + "</div>"
+        )
+    return f'<div class="cm-tline">{"".join(blocks)}</div>' if blocks else ""
 
 
 def _copy_button(text: str):
@@ -539,8 +600,9 @@ design = st.session_state.design
 
 st.markdown('<div class="cm-divider"></div>', unsafe_allow_html=True)
 
-tab_bom, tab_schem, tab_power, tab_warn, tab_qa = st.tabs(
-    ["Components & BOM", "Schematic", "Power Budget", "Design Warnings", "Datasheet Q&A"]
+(tab_bom, tab_schem, tab_3d, tab_build, tab_power, tab_warn, tab_qa) = st.tabs(
+    ["Components & BOM", "Schematic", "3D View", "Build Plan", "Power Budget",
+     "Design Warnings", "Datasheet Q&A"]
 )
 
 # --------------------------------------------------------------------------
@@ -602,7 +664,7 @@ with tab_bom:
             )
 
 # --------------------------------------------------------------------------
-# Tab — schematic
+# Tab — interactive schematic
 # --------------------------------------------------------------------------
 with tab_schem:
     if not design:
@@ -614,18 +676,15 @@ with tab_schem:
     else:
         schem_desc = design.get("schematic_description", {}) or {}
         st.markdown(section(schem_desc.get("title") or "Circuit"), unsafe_allow_html=True)
-        image = generate_schematic(schem_desc)
-        if image is not None:
-            st.image(image, use_container_width=True)
-            st.markdown(
-                '<div class="cm-note">Best-effort topology drawn from the model\'s structured '
-                "description. AI-generated — verify against each datasheet before building.</div>",
-                unsafe_allow_html=True,
-            )
+
+        canvas, canvas_height = schematic_html(schem_desc)
+        if canvas:
+            components.html(canvas, height=canvas_height, scrolling=False)
         else:
-            st.warning(
-                "Couldn't render a schematic from the model's description. The structured "
-                "description is shown below instead."
+            st.markdown(
+                empty_state("📐", "Not enough structure to draw",
+                            "The model didn't return schematic elements for this design."),
+                unsafe_allow_html=True,
             )
 
         connections = schem_desc.get("connections") or []
@@ -640,8 +699,103 @@ with tab_schem:
                 unsafe_allow_html=True,
             )
 
+        st.markdown(
+            '<div class="cm-note">AI-generated topology — verify every net against the '
+            "datasheets before building.</div>",
+            unsafe_allow_html=True,
+        )
+
+        image = generate_schematic(schem_desc)
+        if image is not None:
+            with st.expander("Rendered schematic (static)"):
+                st.image(image, use_container_width=True)
         with st.expander("Schematic description (raw)"):
             st.json(schem_desc)
+
+# --------------------------------------------------------------------------
+# Tab — 3D board view
+# --------------------------------------------------------------------------
+with tab_3d:
+    if not design:
+        st.markdown(
+            empty_state("🧊", "No board yet",
+                        "Generate a design to see the parts placed on a board you can rotate."),
+            unsafe_allow_html=True,
+        )
+    else:
+        board = design.get("board", {}) or {}
+        view, view_height = board_html(board)
+        if view:
+            st.markdown(section("Board layout"), unsafe_allow_html=True)
+            components.html(view, height=view_height, scrolling=False)
+            st.markdown(
+                '<div class="cm-note">A placement sketch, not a routed PCB — footprints and '
+                "positions are the model's first pass, with no copper, vias or DRC. Use it to "
+                "sanity-check size and part arrangement before laying the board out for real.</div>",
+                unsafe_allow_html=True,
+            )
+
+            placements = [p for p in (board.get("placements") or []) if isinstance(p, dict)]
+            if placements:
+                st.markdown(section("Placements"), unsafe_allow_html=True)
+                rows = []
+                for p in placements:
+                    pos = f"{_num(p.get('x_mm')) or 0:.1f}, {_num(p.get('y_mm')) or 0:.1f}"
+                    size = (f"{_num(p.get('w_mm')) or 0:.1f} × "
+                            f"{_num(p.get('h_mm')) or 0:.1f} × {_num(p.get('z_mm')) or 0:.1f}")
+                    rows.append(
+                        f"<tr><td class='mono'>{_esc(p.get('ref'))}</td>"
+                        f"<td>{_esc(p.get('name'))}</td>"
+                        f"<td class='mono'>{_esc(p.get('kind'))}</td>"
+                        f"<td class='r mono'>{pos}</td>"
+                        f"<td class='r mono'>{size}</td></tr>"
+                    )
+                st.markdown(
+                    '<div class="cm-tablewrap"><table class="cm-table"><thead><tr>'
+                    "<th>Ref</th><th>Part</th><th>Kind</th>"
+                    "<th class='r'>x, y (mm)</th><th class='r'>w × h × z (mm)</th>"
+                    f'</tr></thead><tbody>{"".join(rows)}</tbody></table></div>',
+                    unsafe_allow_html=True,
+                )
+        else:
+            st.markdown(
+                empty_state("🧊", "No board layout returned",
+                            "The model didn't include placement data for this design. "
+                            "Try regenerating, or describe a more specific board."),
+                unsafe_allow_html=True,
+            )
+
+# --------------------------------------------------------------------------
+# Tab — build plan
+# --------------------------------------------------------------------------
+with tab_build:
+    if not design:
+        st.markdown(
+            empty_state("🧭", "No build plan yet",
+                        "Generate a design to get a phased plan for actually building it."),
+            unsafe_allow_html=True,
+        )
+    else:
+        phases = [p for p in (design.get("build_plan") or []) if isinstance(p, dict)]
+        if phases:
+            total_steps = sum(len(p.get("steps") or []) for p in phases)
+            st.markdown(
+                stat_tiles([
+                    ("Phases", f"{len(phases)}", "each independently testable"),
+                    ("Steps", f"{total_steps}", "across the whole build"),
+                    ("Checkpoints", f"{sum(1 for p in phases if p.get('checkpoint'))}",
+                     "verify before moving on"),
+                ]),
+                unsafe_allow_html=True,
+            )
+            st.markdown(section("Phase by phase"), unsafe_allow_html=True)
+            st.markdown(build_plan_html(phases), unsafe_allow_html=True)
+        else:
+            st.markdown(
+                empty_state("🧭", "No build plan returned",
+                            "The model didn't include a build plan for this design."),
+                unsafe_allow_html=True,
+            )
 
 # --------------------------------------------------------------------------
 # Tab — power budget

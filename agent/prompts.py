@@ -43,10 +43,24 @@ solution and return it as a SINGLE JSON object (schema below).
   "schematic_description": {
     "title": "string",
     "elements": [
-      {"type": "power_source|ground|resistor|capacitor|inductor|diode|led|ic|sensor|antenna|switch|label",
-       "name": "string", "value": "optional", "notes": "optional"}
+      {"ref": "U1|C1|BT1|ANT1 — unique designator", "name": "string",
+       "type": "power_source|ground|resistor|capacitor|inductor|diode|led|ic|regulator|sensor|antenna|switch|connector",
+       "value": "optional", "notes": "optional"}
+    ],
+    "nets": [
+      {"name": "net name e.g. VDD_3V0", "from": "ref", "to": "ref",
+       "note": "optional, e.g. 'I2C SDA'"}
     ],
     "connections": ["plain-English nets e.g. 'VBAT -> U1.VDD'"]
+  },
+  "board": {
+    "width_mm": number, "height_mm": number,
+    "placements": [
+      {"ref": "matches a schematic element ref", "name": "short label",
+       "x_mm": number, "y_mm": number, "w_mm": number, "h_mm": number,
+       "z_mm": number,
+       "kind": "ic|passive|connector|battery|antenna|sensor|regulator"}
+    ]
   },
   "power_budget": {
     "applicable": boolean, "battery": "e.g. 'CR2032 (225 mAh)' or null",
@@ -56,6 +70,13 @@ solution and return it as a SINGLE JSON object (schema below).
     ],
     "estimated_battery_life_months": number or null
   },
+  "build_plan": [
+    {"phase": "short phase name", "goal": "one line — what this phase achieves",
+     "steps": ["concrete actions, 2-5 of them"],
+     "parts": ["MPNs used in this phase"],
+     "est_time": "e.g. '45 min'",
+     "checkpoint": "how you verify this phase worked before moving on"}
+  ],
   "design_warnings": ["specific, actionable warnings tied to THIS design"]
 }
 
@@ -65,6 +86,24 @@ solution and return it as a SINGLE JSON object (schema below).
   Be realistic.
 - If not battery-powered: applicable=false, cells=[], estimated_battery_life_months=null.
 - Every design_warnings entry must be specific to the chosen parts.
+
+## Board placement guidance
+- Origin (0,0) is the bottom-left corner of the board; x_mm/y_mm give each part's
+  lower-left corner, w_mm/h_mm its footprint, z_mm its height above the board.
+- Give every significant component a placement, and keep refs consistent with the
+  schematic elements. Keep parts inside the board outline and do NOT overlap them.
+- Use realistic footprints: 0402 ~1.0x0.5 mm, 0603 ~1.6x0.8 mm, QFN48 ~7x7 mm,
+  CR2032 holder ~20x20 mm, chip antenna ~3.2x1.6 mm. Typical heights: passives
+  0.5-1 mm, ICs 1 mm, coin cell holder 3.5 mm.
+- Put the antenna at a board edge with clear space around it, and the battery
+  away from RF.
+
+## Build plan guidance
+- 3 to 6 phases, ordered so each one is independently testable.
+- Start with power (verify rails before populating anything expensive), then the
+  MCU and programming, then peripherals, then integration/enclosure.
+- Every checkpoint must be a real measurement or observation (e.g. "3.30 V ±3%
+  at TP1 with no load"), never "confirm it works".
 
 Return the JSON now.
 """.strip()
