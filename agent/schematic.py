@@ -9,7 +9,7 @@ matplotlib.use("Agg")  # headless backend BEFORE schemdraw imports pyplot
 
 import schemdraw
 import schemdraw.elements as elm
-from PIL import Image
+from PIL import Image, ImageOps
 
 _PASSIVE_MAP = {
     "resistor": elm.Resistor,
@@ -28,6 +28,27 @@ def _clean_label(name: str, value: str) -> str:
     if name and value and value.lower() not in name.lower():
         return f"{name}\n{value}"
     return name or value or "?"
+
+
+# UI ink colour — schemdraw draws dark strokes on a light sheet, which looks wrong
+# on CircuitMind's dark canvas, so the rendered PNG gets recoloured before display.
+_INK = (232, 238, 251)
+
+
+def _recolor_for_dark(img, ink=_INK):
+    """Return the schematic as light strokes on a transparent background.
+
+    Handles both cases schemdraw can hand back: an already-transparent PNG (keep
+    its alpha, just retint the strokes) and a fully opaque white sheet (derive
+    the alpha from luminance so the paper drops out).
+    """
+    img = img.convert("RGBA")
+    alpha = img.getchannel("A")
+    if alpha.getextrema()[0] == 255:
+        alpha = ImageOps.invert(img.convert("L"))
+    tinted = Image.new("RGBA", img.size, ink + (255,))
+    tinted.putalpha(alpha)
+    return tinted
 
 
 def generate_schematic(schematic_description: dict):
@@ -88,6 +109,6 @@ def generate_schematic(schematic_description: dict):
         d += elm.Label().at((x_start - 0.1, top_y + 0.9)).label(title)
 
         png_bytes = d.get_imagedata("png")
-        return Image.open(io.BytesIO(png_bytes))
+        return _recolor_for_dark(Image.open(io.BytesIO(png_bytes)))
     except Exception:
         return None

@@ -10,11 +10,26 @@ from .prompts import CIRCUIT_SYSTEM_PROMPT, DATASHEET_QA_SYSTEM_PROMPT
 DESIGN_MODEL = "claude-haiku-4-5-20251001"
 QA_MODEL = "claude-haiku-4-5-20251001"
 
+# A full design (components + BOM + schematic + power budget + warnings) for a
+# non-trivial project runs well past 4k tokens — a 14-part drone build blows
+# straight through it and the JSON comes back cut off mid-object. 16k leaves
+# comfortable headroom while still bounding cost.
+DESIGN_MAX_TOKENS = 16000
+QA_MAX_TOKENS = 1024
+
 
 class InvalidDesignJSON(Exception):
-    def __init__(self, message: str, raw_text: str):
+    """Raised when the model's design response can't be parsed as JSON.
+
+    ``truncated`` is True when the response was cut off by the output-token
+    limit rather than being malformed — a different problem with a different fix,
+    so the UI can say something useful instead of dumping raw text.
+    """
+
+    def __init__(self, message: str, raw_text: str, truncated: bool = False):
         super().__init__(message)
         self.raw_text = raw_text
+        self.truncated = truncated
 
 
 class CircuitAgent:
@@ -30,7 +45,7 @@ class CircuitAgent:
     def generate_design(self, project_description: str) -> dict:
         message = self.client.messages.create(
             model=DESIGN_MODEL,
-            max_tokens=4096,
+            max_tokens=DESIGN_MAX_TOKENS,
             system=CIRCUIT_SYSTEM_PROMPT,
             messages=[{
                 "role": "user",
@@ -41,6 +56,14 @@ class CircuitAgent:
         raw_text = "".join(
             block.text for block in message.content if getattr(block, "type", "") == "text"
         ).strip()
+
+        if getattr(message, "stop_reason", "") == "max_tokens":
+            raise InvalidDesignJSON(
+                "The response hit the output-token limit before the JSON was complete.",
+                raw_text=raw_text,
+                truncated=True,
+            )
+
         parsed = self._extract_json(raw_text)
         if parsed is None:
             raise InvalidDesignJSON("The model did not return valid JSON.", raw_text=raw_text)
@@ -82,7 +105,7 @@ class CircuitAgent:
         messages.append({"role": "user", "content": question})
 
         response = self.client.messages.create(
-            model=QA_MODEL, max_tokens=1024, system=system_prompt, messages=messages,
+            model=QA_MODEL, max_tokens=QA_MAX_TOKENS, system=system_prompt, messages=messages,
         )
         answer = "".join(
             block.text for block in response.content if getattr(block, "type", "") == "text"

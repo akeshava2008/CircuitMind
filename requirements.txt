@@ -1,5 +1,5 @@
 anthropic>=0.40.0
-streamlit>=1.40.0
+streamlit>=1.41.0
 schemdraw>=0.19
 pypdf>=4.0.0
 pandas>=2.0.0
