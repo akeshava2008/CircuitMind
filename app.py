@@ -5,6 +5,7 @@ CircuitMind — Streamlit front-end.  Run with:  streamlit run app.py
 from __future__ import annotations
 import html
 import json
+import os
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -16,6 +17,17 @@ from agent.schematic import generate_schematic
 from utils.rag import load_pdf_and_chunk, get_relevant_chunks
 
 load_dotenv()
+
+# Locally the key comes from .env; on Streamlit Community Cloud it arrives in
+# st.secrets instead, which does not reliably reach os.environ. Bridge the two
+# here so CircuitAgent can stay Streamlit-agnostic and read the environment.
+if not os.environ.get("ANTHROPIC_API_KEY"):
+    try:
+        _secret_key = st.secrets["ANTHROPIC_API_KEY"]
+    except Exception:
+        _secret_key = None
+    if _secret_key:
+        os.environ["ANTHROPIC_API_KEY"] = str(_secret_key)
 
 st.set_page_config(
     page_title="CircuitMind",
