@@ -3,7 +3,7 @@
 cd "$(dirname "$0")"
 if [ ! -f .env ]; then
   cp .env.example .env
-  echo ">>> Created .env — open it and paste your Anthropic key (sk-ant-...), then run again."
+  echo ">>> Created .env — open it and set your Chabi client ID and redirect URI, then run again."
   open -e .env
   exit 0
 fi

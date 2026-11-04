@@ -8,8 +8,11 @@ import json
 import os
 
 import streamlit as st
-import streamlit.components.v1 as components
 from dotenv import load_dotenv
+from streamlit.errors import StreamlitSecretNotFoundError
+from config import Settings
+from providers.chabi import ChabiProvider, BrowserRequestPending
+from ui.chabi import mount as mount_chabi
 
 from agent.circuit_agent import CircuitAgent, InvalidDesignJSON
 from agent.bom import format_bom_table, calculate_bom_total
@@ -19,17 +22,6 @@ from ui.schematic_view import schematic_html
 from ui.three_view import board_html
 
 load_dotenv()
-
-# Locally the key comes from .env; on Streamlit Community Cloud it arrives in
-# st.secrets instead, which does not reliably reach os.environ. Bridge the two
-# here so CircuitAgent can stay Streamlit-agnostic and read the environment.
-if not os.environ.get("ANTHROPIC_API_KEY"):
-    try:
-        _secret_key = st.secrets["ANTHROPIC_API_KEY"]
-    except Exception:
-        _secret_key = None
-    if _secret_key:
-        os.environ["ANTHROPIC_API_KEY"] = str(_secret_key)
 
 st.set_page_config(
     page_title="CircuitMind",
@@ -117,18 +109,36 @@ st.markdown(
     .stTextArea textarea::placeholder{color:var(--dim) !important;}
     [data-testid="stChatInput"] textarea{font-family:var(--body) !important;}
 
-    /* ---------- tabs ---------- */
-    .stTabs [data-baseweb="tab-list"]{
-      gap:5px; background:#0b111ca6; border:1px solid var(--line);
-      border-radius:14px; padding:6px; backdrop-filter:blur(10px);
+    /* ---------- design workspace navigation ---------- */
+    .stTabs [role="tablist"]{
+      display:flex; gap:5px; overflow:visible; flex-wrap:wrap; height:auto;
+      padding:6px; margin:2px 0 20px;
+      background:linear-gradient(180deg,#111a29eb,#0b121ee8);
+      border:1px solid #ffffff14; border-radius:16px;
+      box-shadow:0 8px 24px #00000024,inset 0 1px 0 #ffffff05;
+      scrollbar-width:thin; scrollbar-color:#294154 transparent;
     }
-    .stTabs [data-baseweb="tab"]{
-      font-family:var(--head); font-weight:600; font-size:13.5px;
-      color:var(--muted); border-radius:10px; padding:9px 16px; background:transparent;
+    .stTabs [role="tab"]{
+      flex:1 0 auto; height:44px; min-height:44px;
+      padding:0 15px; margin:0; border:1px solid transparent;
+      border-radius:10px; background:transparent;
+      font-family:var(--head); font-weight:600; font-size:13px;
+      color:#93a3bd; white-space:nowrap;
+      transition:background .18s,color .18s,border-color .18s;
     }
-    .stTabs [data-baseweb="tab"]:hover{color:var(--ink); background:#ffffff0a;}
-    .stTabs [aria-selected="true"]{color:#04121f !important; background:var(--grad);}
-    .stTabs [data-baseweb="tab-highlight"], .stTabs [data-baseweb="tab-border"]{display:none;}
+    .stTabs [role="tab"] p{font-family:inherit; font-size:inherit; font-weight:inherit; margin:0;}
+    .stTabs [role="tab"]:hover{color:#e8eefb; background:#ffffff08;}
+    .stTabs [role="tab"][aria-selected="true"]{
+      color:#b8f5ff !important;
+      background:linear-gradient(120deg,#22d3ee20,#4b8bff18);
+      border-color:#22d3ee40; box-shadow:inset 0 1px 0 #ffffff08,0 2px 8px #0002;
+    }
+    .stTabs [role="tab"]:focus-visible{outline:2px solid #22d3ee; outline-offset:2px;}
+    .stTabs [data-baseweb="tab-highlight"],.stTabs [data-baseweb="tab-border"]{display:none;}
+    @media(max-width:760px){
+      .stTabs [role="tablist"]{border-radius:12px; padding:4px; gap:3px;}
+      .stTabs [role="tab"]{height:40px; min-height:40px; padding:0 12px; font-size:12px; border-radius:8px;}
+    }
 
     /* ---------- sidebar ---------- */
     [data-testid="stSidebar"]{background:#070b12e8; border-right:1px solid var(--line); backdrop-filter:blur(14px);}
@@ -448,7 +458,7 @@ def _copy_button(text: str):
         .replace(">", "\\u003e")
         .replace("&", "\\u0026")
     )
-    components.html(
+    st.iframe(
         f"""
         <style>
           @import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@600&display=swap');
@@ -478,16 +488,11 @@ def _copy_button(text: str):
 # --------------------------------------------------------------------------
 # Agent + session state
 # --------------------------------------------------------------------------
-@st.cache_resource(show_spinner=False)
-def get_agent():
-    try:
-        return CircuitAgent(), None
-    except Exception as exc:
-        return None, str(exc)
-
-
-agent, agent_error = get_agent()
-
+try:
+    secrets = dict(st.secrets)
+except (StreamlitSecretNotFoundError, FileNotFoundError):
+    secrets = {}
+settings = Settings.from_sources(os.environ, secrets)
 for key, default in (
     ("design", None), ("qa_history", []), ("pdf_chunks", []), ("pdf_name", None),
 ):
@@ -506,6 +511,18 @@ with st.sidebar:
         "idea to a BOM, schematic, and power budget.</div>",
         unsafe_allow_html=True,
     )
+    st.markdown('<div class="cm-divider"></div>', unsafe_allow_html=True)
+
+    signed_in = mount_chabi(settings)
+    supported_models = {"claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"}
+    agent, agent_error = None, None
+    if settings.design_model not in supported_models or settings.qa_model not in supported_models:
+        agent_error = "Configure supported Chabi Claude models for design and Q&A."
+    elif not signed_in:
+        agent_error = "Sign in with Chabi to use AI features."
+    else:
+        # Only this session's request/results enter Python. Tokens stay in the browser.
+        agent = CircuitAgent(ChabiProvider(st.session_state), settings)
     st.markdown('<div class="cm-divider"></div>', unsafe_allow_html=True)
 
     st.markdown('<div class="cm-sidelabel">Datasheet</div>', unsafe_allow_html=True)
@@ -542,7 +559,7 @@ with st.sidebar:
     st.markdown('<div class="cm-divider"></div>', unsafe_allow_html=True)
     st.markdown('<div class="cm-sidelabel">Status</div>', unsafe_allow_html=True)
     if agent_error:
-        st.error(agent_error)
+        st.info(agent_error)
     else:
         st.markdown('<div class="cm-pill">◆ Agent ready</div>', unsafe_allow_html=True)
     st.markdown(
@@ -570,17 +587,25 @@ project_description = st.text_area(
         "6 months on a CR2032 coin cell."
     ),
 )
-generate_clicked = st.button("⚡  Generate Design", type="primary")
+generate_clicked = st.button("⚡  Generate Design", type="primary",
+                             disabled=agent is None or bool(st.session_state.get("chabi_request")))
 
 if generate_clicked:
+    st.session_state.pending_design = project_description
+pending_design = st.session_state.get("pending_design")
+if pending_design is not None:
     if agent is None:
-        st.error("The agent isn't configured. Add your ANTHROPIC_API_KEY to a .env file and restart.")
-    elif not project_description.strip():
+        st.info(agent_error)
+    elif not pending_design.strip():
         st.warning("Please describe your project first.")
     else:
         with st.spinner("Designing your circuit — selecting parts, sizing power, drawing the schematic…"):
             try:
-                st.session_state.design = agent.generate_design(project_description)
+                st.session_state.design = agent.generate_design(pending_design)
+            except BrowserRequestPending as exc:
+                if exc.newly_queued:
+                    st.rerun()
+                st.stop()
             except InvalidDesignJSON as exc:
                 st.session_state.design = None
                 if getattr(exc, "truncated", False):
@@ -595,6 +620,10 @@ if generate_clicked:
             except Exception as exc:
                 st.session_state.design = None
                 st.error(f"Something went wrong while generating the design: {exc}")
+
+    st.session_state.pop("pending_design", None)
+    if agent is None:
+        st.session_state.pop("chabi_request", None)
 
 design = st.session_state.design
 
@@ -679,7 +708,7 @@ with tab_schem:
 
         canvas, canvas_height = schematic_html(schem_desc)
         if canvas:
-            components.html(canvas, height=canvas_height, scrolling=False)
+            st.iframe(canvas, height=canvas_height)
         else:
             st.markdown(
                 empty_state("📐", "Not enough structure to draw",
@@ -708,7 +737,7 @@ with tab_schem:
         image = generate_schematic(schem_desc)
         if image is not None:
             with st.expander("Rendered schematic (static)"):
-                st.image(image, use_container_width=True)
+                st.image(image, width="stretch")
         with st.expander("Schematic description (raw)"):
             st.json(schem_desc)
 
@@ -727,7 +756,7 @@ with tab_3d:
         view, view_height = board_html(board)
         if view:
             st.markdown(section("Board layout"), unsafe_allow_html=True)
-            components.html(view, height=view_height, scrolling=False)
+            st.iframe(view, height=view_height)
             st.markdown(
                 '<div class="cm-note">A placement sketch, not a routed PCB — footprints and '
                 "positions are the model's first pass, with no copper, vias or DRC. Use it to "
@@ -881,7 +910,7 @@ with tab_qa:
             unsafe_allow_html=True,
         )
     elif agent is None:
-        st.error("The agent isn't configured (missing API key), so Q&A is off.")
+        st.info(agent_error)
     else:
         st.markdown(
             section(f"Ask about {st.session_state.pdf_name}"), unsafe_allow_html=True
@@ -890,9 +919,13 @@ with tab_qa:
             with st.chat_message(turn["role"]):
                 st.markdown(turn["content"])
 
-        user_q = st.chat_input("Ask about the datasheet…")
+        user_q = st.chat_input("Ask about the datasheet…", disabled=bool(st.session_state.get("pending_design")))
         if user_q:
+            st.session_state.pending_qa = user_q
             st.session_state.qa_history.append({"role": "user", "content": user_q})
+        pending_qa = st.session_state.get("pending_qa")
+        if pending_qa:
+            user_q = pending_qa
             with st.chat_message("user"):
                 st.markdown(user_q)
             with st.chat_message("assistant"):
@@ -900,9 +933,14 @@ with tab_qa:
                     context = get_relevant_chunks(user_q, st.session_state.pdf_chunks, top_k=3)
                     try:
                         answer = agent.answer_datasheet_question(
-                            user_q, context, st.session_state.qa_history
+                            user_q, context, st.session_state.qa_history[:-1]
                         )
+                    except BrowserRequestPending as exc:
+                        if exc.newly_queued:
+                            st.rerun()
+                        st.stop()
                     except Exception as exc:
                         answer = f"Sorry, I hit an error: {exc}"
                 st.markdown(answer)
             st.session_state.qa_history.append({"role": "assistant", "content": answer})
+            st.session_state.pop("pending_qa", None)
