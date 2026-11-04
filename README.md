@@ -22,7 +22,7 @@ All AI-generated output is explicitly flagged for human verification before buil
 ## Tech stack
 
 - **Frontend:** [Streamlit](https://streamlit.io/)
-- **AI:** [Claude](https://www.anthropic.com/claude) (Anthropic API) via the `anthropic` Python SDK, with a strict JSON output contract
+- **AI:** Claude through [Chabi](https://chabi.dev), using each signed-in user's plan and the official Anthropic browser SDK with structured JSON output
 - **Schematic rendering:** `schemdraw` + `matplotlib`
 - **Datasheet retrieval:** `pypdf` for extraction, hand-rolled TF-IDF cosine similarity for chunk ranking (no vector DB)
 - **Data/display:** `pandas`, `Pillow`
@@ -33,7 +33,7 @@ All AI-generated output is explicitly flagged for human verification before buil
 app.py                    Streamlit UI — tabs for BOM, schematic, 3D view,
                            build plan, power budget, warnings, datasheet Q&A
 agent/
-  circuit_agent.py         Wraps the Claude API call; enforces + repairs JSON output
+  circuit_agent.py         Builds Chabi requests; validates structured design output
   prompts.py                System prompts (design generation, datasheet Q&A)
   bom.py                    BOM formatting + Digikey link generation
   schematic.py              Static schematic rendering via schemdraw
@@ -50,11 +50,20 @@ The design-generation prompt requires the model to return **only** a JSON object
 ## Running it locally
 
 1. Clone the repo and `cd circuitmind`
-2. Copy `.env.example` to `.env` and add your own [Anthropic API key](https://console.anthropic.com/)
+2. Copy `.env.example` to `.env`, then set your Chabi client ID and registered redirect URL
 3. `pip install -r requirements.txt`
 4. `streamlit run app.py`
 
-(Or just double-click `run.command`, which does all of the above.)
+(Or double-click `run.command`.)
+
+Use **Sign in with Chabi** in the sidebar. AI requests run on each visitor's own
+Chabi plan. Defaults: `claude-sonnet-5-5` for design and `claude-haiku-5-5` for
+Q&A. No owner API key or client secret is needed. Register the exact app root
+as the OAuth callback (`http://localhost:8501/` for local development).
+
+[OAuth setup, deployment, architecture and checks](docs/chabi.md).
+The browser bundle is committed, so Python hosts need no Node build. Config
+changes need an app restart, not a frontend rebuild.
 
 ## Status
 
