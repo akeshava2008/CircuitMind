@@ -11334,29 +11334,27 @@ var Vp = class {
 			};
 		}
 	}
-	async signIn() {
+	async signIn(e = (e) => this.env.location.assign(e)) {
 		if (!this.config.clientId || !this.config.redirectUri) throw new $("The host needs to configure Chabi sign-in.");
 		await this.lock(() => {});
-		let e = (e) => this.env.crypto.getRandomValues(new Uint8Array(e)), t = (e) => btoa(String.fromCharCode(...e)).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", ""), n = t(e(32)), r = t(e(32)), i = t(new Uint8Array(await this.env.crypto.subtle.digest("SHA-256", new TextEncoder().encode(n))));
+		let t = (e) => this.env.crypto.getRandomValues(new Uint8Array(e)), n = (e) => btoa(String.fromCharCode(...e)).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", ""), r = n(t(32)), i = n(t(32)), a = n(new Uint8Array(await this.env.crypto.subtle.digest("SHA-256", new TextEncoder().encode(r))));
 		for (let e of Object.keys(this.env.localStorage)) if (e.startsWith(this.prefix)) try {
 			Date.now() - JSON.parse(this.env.localStorage.getItem(e)).time > Lp && this.env.localStorage.removeItem(e);
 		} catch {
 			this.env.localStorage.removeItem(e);
 		}
-		this.env.localStorage.setItem(this.prefix + r, JSON.stringify({
-			verifier: n,
+		this.env.localStorage.setItem(this.prefix + i, JSON.stringify({
+			verifier: r,
 			time: Date.now(),
 			redirectUri: this.config.redirectUri
-		}));
-		let a = new URLSearchParams({
+		})), e(`${Ip}/oauth/authorize?${new URLSearchParams({
 			response_type: "code",
 			client_id: this.config.clientId,
 			redirect_uri: this.config.redirectUri,
-			code_challenge: i,
+			code_challenge: a,
 			code_challenge_method: "S256",
-			state: r
-		});
-		this.env.location.assign(`${Ip}/oauth/authorize?${a}`);
+			state: i
+		})}`);
 	}
 	async callback() {
 		let e = new URL(this.env.location.href);
@@ -11469,11 +11467,19 @@ function Kp(e) {
 		i.textContent = n ? `Signed in with Chabi${s.name ? ` · ${s.name}` : ""}${s.balance == null ? "" : ` · ${s.balance} credits`}` : "Use your own Chabi plan for AI features.", c.append(i);
 		let o = document.createElement("button");
 		if (o.textContent = n ? "Sign out" : "Sign in with Chabi", o.disabled = !a.clientId || !a.redirectUri || !s.ready, o.onclick = async () => {
+			let e;
+			if (!n) {
+				if (e = window.open("about:blank", "_blank"), !e) {
+					s.message = "Allow this app to open a sign-in tab, then try again.", d();
+					return;
+				}
+				e.opener = null;
+			}
 			o.disabled = !0;
 			try {
-				n ? (await s.auth.signOut(), s.name = null, s.balance = null, s.message = "", d()) : await s.auth.signIn();
-			} catch (e) {
-				s.message = e.message, d();
+				n ? (await s.auth.signOut(), s.name = null, s.balance = null, s.message = "", d()) : (await s.auth.signIn((t) => e.location.replace(t)), s.message = "Complete sign-in in the new tab. This tab will update automatically.", d());
+			} catch (t) {
+				e?.close(), s.message = t.message, d();
 			}
 		}, c.append(o), !a.clientId || !a.redirectUri) {
 			let e = document.createElement("p");
@@ -11546,7 +11552,7 @@ function Kp(e) {
 		}
 	}
 	let m = (e) => {
-		e.key === s.auth.key && (s.name = null, s.balance = null, d(), s.auth.read() && f());
+		e.key === s.auth.key && (s.name = null, s.balance = null, s.message = "", d(), s.auth.read() && f());
 	};
 	window.addEventListener("storage", m);
 	let h = setInterval(async () => {

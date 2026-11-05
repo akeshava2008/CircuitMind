@@ -45,6 +45,12 @@ local port, update both the portal registration and `CHABI_REDIRECT_URI`.
 ## Implementation
 
 `frontend/src/auth.js` implements authorization code + PKCE without a secret.
+On a sign-in click, the browser opens a top-level tab before asynchronous PKCE
+work. This avoids loading Chabi inside Community Cloud's sandboxed app frame,
+where Chabi's framing policy blocks the consent page. The new tab has no opener.
+If popups are blocked, the app asks the user to allow the sign-in tab and retry.
+The callback updates the original app tab through the existing storage event.
+
 Random state and verifier persist in localStorage keyed by state, with a
 15-minute lifetime and the redirect URI. Callbacks validate and consume them
 once and remove OAuth parameters before exchanging the code. Missing or expired
