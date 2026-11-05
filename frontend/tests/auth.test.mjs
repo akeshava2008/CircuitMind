@@ -106,3 +106,13 @@ test('both SDK and direct error envelopes are decoded', () => {
   assert.equal(details({error:{error:{code:'insufficient_credits'}}}).code,'insufficient_credits');
   assert.equal(details({error:{code:'invalid_token'}}).code,'invalid_token');
 });
+
+test('sign-in can navigate a top-level tab without redirecting the app frame', async () => {
+  const {auth, env} = setup();
+  const original = env.location.href;
+  let destination;
+  await auth.signIn(url => {destination = new URL(url);});
+  assert.equal(env.location.href, original);
+  assert.equal(destination.origin, 'https://chabi.dev');
+  assert.ok(env.localStorage.getItem(auth.prefix + destination.searchParams.get('state')));
+});

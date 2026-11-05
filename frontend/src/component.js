@@ -38,11 +38,31 @@ export default function(component) {
     button.textContent = signedIn ? 'Sign out' : 'Sign in with Chabi';
     button.disabled = !config.clientId || !config.redirectUri || !rt.ready;
     button.onclick = async () => {
+      let signInWindow;
+      if (!signedIn) {
+        // Cloud embeds the app in a sandbox without top-navigation permission.
+        // Open a top-level tab during the click, before any awaited PKCE work.
+        signInWindow = window.open('about:blank', '_blank');
+        if (!signInWindow) {
+          rt.message = 'Allow this app to open a sign-in tab, then try again.';
+          render();
+          return;
+        }
+        signInWindow.opener = null;
+      }
       button.disabled = true;
       try {
         if (signedIn) { await rt.auth.signOut(); rt.name = null; rt.balance = null; rt.message = ''; render(); }
-        else await rt.auth.signIn();
-      } catch (e) { rt.message = e.message; render(); }
+        else {
+          await rt.auth.signIn(url => signInWindow.location.replace(url));
+          rt.message = 'Complete sign-in in the new tab. This tab will update automatically.';
+          render();
+        }
+      } catch (e) {
+        signInWindow?.close();
+        rt.message = e.message;
+        render();
+      }
     };
     root.append(button);
     if (!config.clientId || !config.redirectUri) {
@@ -107,7 +127,7 @@ export default function(component) {
   }
   const onStorage = e => {
     if (e.key !== rt.auth.key) return;
-    rt.name = null; rt.balance = null; render();
+    rt.name = null; rt.balance = null; rt.message = ''; render();
     if (rt.auth.read()) void account();
   };
   window.addEventListener('storage', onStorage);

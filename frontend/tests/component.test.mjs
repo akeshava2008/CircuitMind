@@ -110,3 +110,39 @@ test('failed AI request clears busy state and is not resubmitted on a rerender',
   assert.ok(!parent.children[0].children.some(el => el.textContent === 'Chabi is working…'));
   cleanup1(); cleanup2();
 });
+
+test('sign-in opens an escaping tab synchronously before asynchronous PKCE work', async () => {
+  const descriptor = Object.getOwnPropertyDescriptor(navigator, 'locks');
+  let releaseLock, destination, opened = false;
+  Object.defineProperty(navigator, 'locks', {configurable:true, value:{request:(_name,fn) => new Promise(resolve => {releaseLock=()=>resolve(fn());})}});
+  const popup = {opener:'app', location:{replace:url=>{destination=new URL(url);}}, close(){}};
+  window.open = (url, target) => {assert.equal(url,'about:blank'); assert.equal(target,'_blank'); opened=true; return popup;};
+  const parent = new Element();
+  const cleanup = mount({data:{client_id:'popup-client',redirect_uri:'http://localhost:8501/',signed_in:false},parentElement:parent,setStateValue(){},setTriggerValue(){}});
+  try {
+    await settle();
+    const button=parent.children[0].children.find(el=>el.textContent==='Sign in with Chabi');
+    const click = button.onclick();
+    assert.equal(opened,true, 'open must occur during the click before awaiting the lock');
+    assert.equal(popup.opener,null);
+    assert.equal(destination,undefined);
+    releaseLock(); await click;
+    assert.equal(destination.origin,'https://chabi.dev');
+    assert.equal(destination.searchParams.get('client_id'),'popup-client');
+    assert.ok(storage.has('circuitmind:chabi:popup-client:oauth:'+destination.searchParams.get('state')));
+  } finally {
+    cleanup(); delete window.open;
+    if(descriptor) Object.defineProperty(navigator,'locks',descriptor); else delete navigator.locks;
+  }
+});
+
+test('blocked sign-in tabs show an actionable message without navigating the app', async () => {
+  window.open=()=>null;
+  const parent = new Element();
+  const cleanup=mount({data:{client_id:'blocked-client',redirect_uri:'http://localhost:8501/',signed_in:false},parentElement:parent,setStateValue(){},setTriggerValue(){}});
+  try {
+    await settle();
+    await parent.children[0].children.find(el=>el.textContent==='Sign in with Chabi').onclick();
+    assert.ok(parent.children[0].children.some(el=>el.textContent?.includes('Allow this app to open a sign-in tab')));
+  } finally {cleanup(); delete window.open;}
+});

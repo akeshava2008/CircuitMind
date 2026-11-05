@@ -48,7 +48,7 @@ export class ChabiAuth {
       return {...body, expires_at: Date.now() + Number(body.expires_in) * 1000};
     }
   }
-  async signIn() {
+  async signIn(navigate = url => this.env.location.assign(url)) {
     // Access localStorage and Web Locks before navigating; never weaken refresh safety.
     if (!this.config.clientId || !this.config.redirectUri) throw new ChabiError('The host needs to configure Chabi sign-in.');
     await this.lock(() => {});
@@ -65,7 +65,7 @@ export class ChabiAuth {
     this.env.localStorage.setItem(this.prefix + state, JSON.stringify({verifier, time: Date.now(), redirectUri: this.config.redirectUri}));
     const params = new URLSearchParams({response_type: 'code', client_id: this.config.clientId,
       redirect_uri: this.config.redirectUri, code_challenge: challenge, code_challenge_method: 'S256', state});
-    this.env.location.assign(`${BASE}/oauth/authorize?${params}`);
+    navigate(`${BASE}/oauth/authorize?${params}`);
   }
   async callback() {
     const url = new URL(this.env.location.href);
